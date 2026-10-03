@@ -11,7 +11,7 @@ const {
     ActivityType 
 } = require('discord.js');
 
-const BOT_TOKEN = 'MTU1NTk5NzY3MjA5NDMwMjI3OA.GuNHaV.xlENFpZAoqHMjZOwRbCIDF8sVnvAfdg0_g53AE';
+const BOT_TOKEN = '';
 const CLIENT_ID = '1555997672094302278';
 const GUILD_ID = '1382229810335453206';
 
