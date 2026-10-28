@@ -12,62 +12,116 @@ const {
     MessageFlags
 } = require('discord.js');
 
+const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
+
 const BOT_TOKEN = '';
 const CLIENT_ID = '1555997672094302278';
 const GUILD_ID = '1382229810335453206';
-const API_KEY = 'key_vGV-CNOBdgm-7B6NL3NxGY-5vlQbmUutJYg1SPS0UQ8';
-const BASE_URL = 'https://media.rahmat.cc.cd';
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
     ]
 });
 
-// DAFTAR RESOLUSI YOUTUBE (144p - 1080p)
-const resolutions = [144, 240, 360, 480, 720, 1080];
+process.on('unhandledRejection', error => {
+    console.error('Unhandled promise rejection:', error);
+});
 
 const commands = [
     new SlashCommandBuilder()
         .setName('use')
-        .setDescription('Unduh Media Sosmed (TikTok, IG, FB, dll)')
-        .addStringOption(opt => opt.setName('link').setDescription('Masukkan link media').setRequired(true)),
+        .setDescription('Unduh Video / Slide Foto TikTok')
+        .addStringOption(option => 
+            option.setName('link')
+                .setDescription('Masukkan link TikTok')
+                .setRequired(true)),
 
     new SlashCommandBuilder()
+        .setName('usemp4')
+        .setDescription('Unduh Video MP4 TikTok')
+        .addStringOption(option => 
+            option.setName('link')
+                .setDescription('Masukkan link TikTok')
+                .setRequired(true)),
+    
+    new SlashCommandBuilder()
         .setName('usemp3')
-        .setDescription('Unduh Audio MP3 / Musik')
-        .addStringOption(opt => opt.setName('link').setDescription('Masukkan link musik/audio').setRequired(true)),
-
-    ...resolutions.map(res => 
-        new SlashCommandBuilder()
-            .setName(`use${res}`)
-            .setDescription(`Unduh Video YouTube Kualitas ${res}p`)
-            .addStringOption(opt => opt.setName('link').setDescription(`Masukkan link YouTube (${res}p)`).setRequired(true))
-    )
+        .setDescription('Unduh Audio MP3 TikTok')
+        .addStringOption(option => 
+            option.setName('link')
+                .setDescription('Masukkan link TikTok')
+                .setRequired(true))
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
 
 async function registerCommands() {
     try {
-        console.log('⏳ Mendaftarkan Slash Commands...');
+        console.log('⏳ Mendaftarkan Slash Commands ke Server ID: ' + GUILD_ID + '...');
         await rest.put(
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
             { body: commands }
         );
-        console.log('✅ Slash Commands berhasil terdaftar!');
+        console.log('✅ Instant Guild Slash Commands berhasil terdaftar!');
     } catch (error) {
-        console.error('❌ Error mendaftarkan Slash Commands:', error);
+        console.error('❌ Error mendaftarkan Guild Slash Commands:', error);
     }
 }
 
-// 1. ENGINE TIKTOK LAMA (tikwm.com)
+// --- FUNGSI DOWNLOAD & RENDER FFMPEG ---
+
+async function downloadFile(url, filepath) {
+    const response = await axios({ url, method: 'GET', responseType: 'stream' });
+    return new Promise((resolve, reject) => {
+        const writer = fs.createWriteStream(filepath);
+        response.data.pipe(writer);
+        writer.on('finish', resolve);
+        writer.on('error', reject);
+    });
+}
+
+async function renderSingleTikTokSlide(imageUrl, audioPathUrl, uniqueId) {
+    return new Promise(async (resolve, reject) => {
+        const tempDir = path.join(__dirname, `temp_${uniqueId}`);
+        if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+
+        try {
+            const audioUrl = audioPathUrl.startsWith('http') ? audioPathUrl : `https://tikwm.com${audioPathUrl}`;
+            const audioPath = path.join(tempDir, 'audio.mp3');
+            await downloadFile(audioUrl, audioPath);
+
+            const imagePath = path.join(tempDir, 'img.jpg');
+            await downloadFile(imageUrl, imagePath);
+
+            const outputPath = path.join(tempDir, 'output.mp4');
+            const ffmpegCmd = `ffmpeg -y -loop 1 -i "${imagePath}" -i "${audioPath}" -c:v libx264 -tune stillimage -c:a aac -b:a 192k -pix_fmt yuv420p -shortest "${outputPath}"`;
+
+            exec(ffmpegCmd, (error) => {
+                if (error) return reject(error);
+                resolve({ outputPath, tempDir });
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
+// --- END FUNGSI BANTUAN ---
+
 async function getTikTok(url) {
     try {
         const response = await fetch(`https://tikwm.com/api/?url=${encodeURIComponent(url)}&hd=1`, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            }
         });
+        
         const text = await response.text();
         let result;
         try {
@@ -85,25 +139,27 @@ async function getTikTok(url) {
                     success: true, 
                     isVideo: false, 
                     urls: result.data.images,
-                    videoUrl: fullVideoUrl 
+                    videoUrl: fullVideoUrl,
+                    audioUrl: result.data.music
                 };
             }
 
             if (fullVideoUrl) {
-                return { success: true, isVideo: true, url: fullVideoUrl, title: result.data.title || 'video' };
+                return { success: true, isVideo: true, url: fullVideoUrl };
             }
         }
-    } catch (e) {
-        console.error('TikTok Fetch error:', e);
-    }
+    } catch (e) {}
     return { success: false };
 }
 
-async function getTikTokAudio(url) {
+async function getAudio(url) {
     try {
         const response = await fetch(`https://tikwm.com/api/?url=${encodeURIComponent(url)}`, {
-            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+            }
         });
+
         const text = await response.text();
         let data;
         try {
@@ -116,243 +172,177 @@ async function getTikTokAudio(url) {
             const musicUrl = data.data.music.startsWith('http') ? data.data.music : `https://tikwm.com${data.data.music}`;
             return { success: true, url: musicUrl, title: data.data.music_info?.title || 'audio' };
         }
-    } catch (e) {
-        console.error('TikTok Audio fetch error:', e);
-    }
+    } catch (e) {}
     return { success: false };
 }
 
-// 2. ENGINE BACKEND TEMAN (YouTube & Non-TikTok)
-async function processBackendTask(targetUrl, isAudioOnly, maxHeight, interaction) {
-    let taskId = null;
-    try {
-        console.log(`⏳ Membuat task backend untuk: ${targetUrl} (Max Height: ${maxHeight || 'Auto'})`);
-        
-        const payload = {
-            url: targetUrl,
-            audio_only: isAudioOnly
-        };
-
-        if (maxHeight) {
-            payload.max_height = parseInt(maxHeight);
-        }
-
-        const createRes = await fetch(`${BASE_URL}/v1/tasks`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-API-Key': API_KEY
-            },
-            body: JSON.stringify(payload)
-        });
-
-        const taskData = await createRes.json();
-        taskId = taskData.task_id || taskData.id || (taskData.data && taskData.data.id);
-        
-        if (!taskId) {
-            return { success: false, error: 'Gagal mendapatkan ID Task dari server API.' };
-        }
-
-        let attempts = 0;
-        const maxAttempts = 40; 
-        let lastStatus = '';
-
-        while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            attempts++;
-
-            const checkRes = await fetch(`${BASE_URL}/v1/tasks/${taskId}`, {
-                method: 'GET',
-                headers: { 'X-API-Key': API_KEY }
-            });
-
-            const statusData = await checkRes.json();
-            const currentStatus = (statusData.status || statusData.state || '').toLowerCase();
-            const progress = statusData.progress ? ` (${statusData.progress}%)` : '';
-
-            if (currentStatus !== lastStatus) {
-                lastStatus = currentStatus;
-                await interaction.editReply({ 
-                    content: `⏳ Memproses media... Status: **${currentStatus}**${progress}` 
-                }).catch(() => {});
-            }
-
-            if (currentStatus === 'completed' || currentStatus === 'success' || statusData.download_url) {
-                const rawDownloadUrl = statusData.download_url || (statusData.result && statusData.result.download_url);
-                
-                if (rawDownloadUrl) {
-                    const finalUrl = rawDownloadUrl.startsWith('http') ? rawDownloadUrl : `${BASE_URL}${rawDownloadUrl}`;
-                    return {
-                        success: true,
-                        downloadUrl: finalUrl,
-                        title: statusData.title || statusData.filename || 'Downloaded Media'
-                    };
-                }
-            } else if (currentStatus === 'failed' || currentStatus === 'error') {
-                return { success: false, error: statusData.error || 'Proses unduh di server gagal.' };
-            }
-        }
-
-        if (taskId) {
-            fetch(`${BASE_URL}/v1/tasks/${taskId}`, {
-                method: 'DELETE',
-                headers: { 'X-API-Key': API_KEY }
-            }).catch(() => {});
-        }
-
-        return { success: false, error: 'Server sedang sibuk/stuck. Silakan coba lagi.' };
-
-    } catch (err) {
-        console.error('Backend Task Error:', err);
-        return { success: false, error: 'Terjadi kesalahan sistem saat menghubungi API.' };
-    }
-}
-
 client.once('clientReady', async () => {
-    console.log(`🤖 Bot MultiDownloader Online: ${client.user.tag}`);
+    console.log(`🤖 Bot TikTok Slash Downloader Online: ${client.user.tag}`);
     client.user.setPresence({
-        activities: [{ name: '/use /use144 - /use1080 /usemp3 ✨', type: ActivityType.Custom }],
+        activities: [{ name: '/use /usemp3 /usemp4 ✨', type: ActivityType.Custom }],
         status: 'online',
     });
     await registerCommands();
 });
 
+// FITUR AUTO-DETECT LINK DARI CHAT
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+
+    const tiktokRegex = /(https?:\/\/(?:www\.|vt\.)?tiktok\.com\/[^\s]+)/;
+    const match = message.content.match(tiktokRegex);
+
+    if (match) {
+        const targetUrl = match[1];
+        
+        // 1. PRIVASI: Hapus pesan pengguna segera setelah link dideteksi
+        try {
+            await message.delete();
+        } catch (err) {
+            console.error("Tidak ada izin hapus pesan atau pesan sudah hilang.");
+        }
+
+        // Teks caption berisi link asli (menggunakan tanda kurung <> agar tidak muncul embed otomatis)
+        const captionText = `🔗 **Link Original:** <${targetUrl}>`;
+
+        // Gunakan channel.send karena message asli sudah dihapus
+        const loadingMsg = await message.channel.send({ content: '⏳ Sedang memproses media...' });
+        const result = await getTikTok(targetUrl);
+        
+        if (result.success) {
+            if (!result.isVideo) {
+                if (result.urls.length === 1) {
+                    await loadingMsg.edit({ content: '⏳ Mendeteksi 1 foto. Sedang menyatukan foto & musik menjadi video...' });
+                    
+                    try {
+                        const renderData = await renderSingleTikTokSlide(result.urls[0], result.audioUrl, message.id);
+                        const attachment = new AttachmentBuilder(renderData.outputPath, { name: 'slide_video.mp4' });
+
+                        await message.channel.send({ content: captionText, files: [attachment] });
+                        await loadingMsg.delete(); 
+                        fs.rmSync(renderData.tempDir, { recursive: true, force: true });
+                    } catch (renderErr) {
+                        await loadingMsg.edit({ content: `❌ Gagal merender foto menjadi video.\n${captionText}` });
+                    }
+                } else {
+                    const attachments = result.urls.slice(0, 10).map((url, i) => 
+                        new AttachmentBuilder(url, { name: `foto_${i + 1}.jpg` })
+                    );
+                    await message.channel.send({ content: captionText, files: attachments });
+                    await loadingMsg.delete(); 
+                }
+            } else {
+                const viewBtn = new ButtonBuilder()
+                    .setLabel('View / Download Link')
+                    .setStyle(ButtonStyle.Link)
+                    .setURL(result.url);
+
+                const row = new ActionRowBuilder().addComponents(viewBtn);
+
+                try {
+                    const attachment = new AttachmentBuilder(result.url, { name: 'video.mp4' });
+                    await message.channel.send({ content: captionText, files: [attachment], components: [row] });
+                    await loadingMsg.delete(); 
+                } catch (err) {
+                    await message.channel.send({ content: captionText, components: [row] });
+                    await loadingMsg.delete(); 
+                }
+            }
+        } else {
+            await loadingMsg.edit({ content: `❌ Gagal memproses media. Server down atau link tidak valid.\n${captionText}` });
+        }
+    }
+});
+
+// FITUR SLASH COMMANDS
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
     const { commandName } = interaction;
     const targetUrl = interaction.options.getString('link');
+    // PERBAIKAN SINTAKS BACKTICK DI SINI
+    const captionText = `🔗 **Link Original:** <${targetUrl}>`;
 
-    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-        return interaction.reply({ content: '❌ Harap masukkan URL link yang valid!', flags: MessageFlags.Ephemeral });
+    if (!targetUrl.includes('tiktok.com')) {
+        return interaction.reply({ content: '❌ Harap masukkan URL link TikTok yang valid!', flags: MessageFlags.Ephemeral });
     }
 
+    // Defer bersifat rahasia/ephemeral. Cuma bot dan user pengirim yang bisa lihat proses loading ini
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const isTikTok = targetUrl.includes('tiktok.com') || targetUrl.includes('vt.tiktok.com');
-    const isAudioOnly = commandName === 'usemp3';
-    
-    // Kurung siku agar Discord tidak membuat auto-embed TikTok yang bikin double
-    const formattedUrlText = `<${targetUrl}>`;
+    // HANDLER /usemp3
+    if (commandName === 'usemp3') {
+        const result = await getAudio(targetUrl);
 
-    // A. PROSES TIKTOK (PAKAI ENGINE TIKWM LAMA)
-    if (isTikTok) {
-        if (isAudioOnly) {
-            const result = await getTikTokAudio(targetUrl);
-            if (result.success) {
-                const downloadBtn = new ButtonBuilder()
-                    .setLabel('View / Download MP3')
-                    .setStyle(ButtonStyle.Link)
-                    .setURL(result.url);
-                const row = new ActionRowBuilder().addComponents(downloadBtn);
-
-                try {
-                    const attachment = new AttachmentBuilder(result.url, { name: `${result.title || 'audio'}.mp3` });
-                    await interaction.channel.send({ 
-                        content: formattedUrlText, 
-                        files: [attachment],
-                        components: [row]
-                    });
-                    await interaction.deleteReply();
-                } catch (err) {
-                    await interaction.channel.send({ content: formattedUrlText, components: [row] });
-                    await interaction.deleteReply();
-                }
-            } else {
-                await interaction.editReply({ content: '❌ Gagal mengambil audio MP3 dari TikTok.' });
-            }
-            return;
-        }
-
-        const result = await getTikTok(targetUrl);
         if (result.success) {
-            if (!result.isVideo) {
-                const attachments = result.urls.slice(0, 10).map((url, i) => 
-                    new AttachmentBuilder(url, { name: `foto_${i + 1}.jpg` })
-                );
+            const viewBtn = new ButtonBuilder()
+                .setLabel('View / Download MP3')
+                .setStyle(ButtonStyle.Link)
+                .setURL(result.url);
+            const row = new ActionRowBuilder().addComponents(viewBtn);
 
-                let components = [];
-                if (result.videoUrl) {
-                    const videoBtn = new ButtonBuilder()
-                        .setLabel('View / Download Video')
-                        .setStyle(ButtonStyle.Link)
-                        .setURL(result.videoUrl);
-                    components.push(new ActionRowBuilder().addComponents(videoBtn));
-                }
-
-                await interaction.channel.send({ 
-                    content: formattedUrlText, 
-                    files: attachments,
-                    components: components
-                });
+            try {
+                const attachment = new AttachmentBuilder(result.url, { name: `${result.title || 'audio'}.mp3` });
+                await interaction.channel.send({ content: captionText, files: [attachment], components: [row] });
                 await interaction.deleteReply();
-            } else {
-                const downloadBtn = new ButtonBuilder()
-                    .setLabel('View / Download Link')
-                    .setStyle(ButtonStyle.Link)
-                    .setURL(result.url);
-                const row = new ActionRowBuilder().addComponents(downloadBtn);
-
-                try {
-                    const attachment = new AttachmentBuilder(result.url, { name: 'video.mp4' });
-                    await interaction.channel.send({ 
-                        content: formattedUrlText, 
-                        files: [attachment],
-                        components: [row]
-                    });
-                    await interaction.deleteReply();
-                } catch (err) {
-                    await interaction.channel.send({ content: formattedUrlText, components: [row] });
-                    await interaction.deleteReply();
-                }
+            } catch (err) {
+                await interaction.channel.send({ content: captionText, components: [row] });
+                await interaction.deleteReply();
             }
         } else {
-            await interaction.editReply({ content: '❌ Gagal memproses media TikTok.' });
+            await interaction.editReply({ content: '❌ Gagal memproses media. Server TikWM sedang down atau link tidak valid.' });
         }
         return;
     }
 
-    // B. PROSES NON-TIKTOK (PAKAI API BACKEND TEMAN)
-    let maxHeight = null;
-    if (commandName.startsWith('use') && commandName !== 'use' && commandName !== 'usemp3') {
-        maxHeight = commandName.replace('use', '');
-    }
+    // HANDLER /use DAN /usemp4
+    if (commandName === 'use' || commandName === 'usemp4') {
+        const result = await getTikTok(targetUrl);
 
-    const backendResult = await processBackendTask(targetUrl, isAudioOnly, maxHeight, interaction);
+        if (result.success) {
+            if (!result.isVideo) {
+                if (result.urls.length === 1) {
+                    await interaction.editReply({ content: '⏳ Menyatukan foto & musik...' });
+                    
+                    try {
+                        const renderData = await renderSingleTikTokSlide(result.urls[0], result.audioUrl, interaction.id);
+                        const attachment = new AttachmentBuilder(renderData.outputPath, { name: 'slide_video.mp4' });
 
-    if (!backendResult.success) {
-        return interaction.editReply({ content: `❌ ${backendResult.error}` });
-    }
+                        // Kirim secara publik (anonim) ke channel
+                        await interaction.channel.send({ content: captionText, files: [attachment] });
+                        await interaction.deleteReply(); 
+                        fs.rmSync(renderData.tempDir, { recursive: true, force: true });
+                    } catch (renderErr) {
+                        await interaction.editReply({ content: '❌ Gagal merender foto menjadi video.' });
+                    }
+                } else {
+                    const attachments = result.urls.slice(0, 10).map((url, i) => 
+                        new AttachmentBuilder(url, { name: `foto_${i + 1}.jpg` })
+                    );
 
-    try {
-        const downloadBtn = new ButtonBuilder()
-            .setLabel('View / Download File')
-            .setStyle(ButtonStyle.Link)
-            .setURL(backendResult.downloadUrl);
+                    await interaction.channel.send({ content: captionText, files: attachments });
+                    await interaction.deleteReply();
+                }
 
-        const row = new ActionRowBuilder().addComponents(downloadBtn);
-        const ext = isAudioOnly ? 'mp3' : 'mp4';
+            } else {
+                const viewBtn = new ButtonBuilder()
+                    .setLabel('View / Download Link')
+                    .setStyle(ButtonStyle.Link)
+                    .setURL(result.url);
+                const row = new ActionRowBuilder().addComponents(viewBtn);
 
-        try {
-            const attachment = new AttachmentBuilder(backendResult.downloadUrl, { name: `media.${ext}` });
-            await interaction.channel.send({ 
-                content: formattedUrlText,
-                files: [attachment],
-                components: [row]
-            });
-            await interaction.deleteReply();
-
-        } catch (attachErr) {
-            await interaction.channel.send({ 
-                content: formattedUrlText,
-                components: [row] 
-            });
-            await interaction.deleteReply();
+                try {
+                    const attachment = new AttachmentBuilder(result.url, { name: 'video.mp4' });
+                    await interaction.channel.send({ content: captionText, files: [attachment], components: [row] });
+                    await interaction.deleteReply();
+                } catch (err) {
+                    await interaction.channel.send({ content: captionText, components: [row] });
+                    await interaction.deleteReply();
+                }
+            }
+        } else {
+            await interaction.editReply({ content: '❌ Gagal memproses media. Server TikWM sedang down atau link tidak valid.' });
         }
-
-    } catch (err) {
-        console.error('Interaction response error:', err);
-        await interaction.editReply({ content: '❌ Terjadi kesalahan saat mengirimkan hasil ke channel.' });
     }
 });
 
