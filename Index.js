@@ -203,7 +203,7 @@ client.on('messageCreate', async (message) => {
         }
 
         // Teks caption berisi link asli (menggunakan tanda kurung <> agar tidak muncul embed otomatis)
-        const captionText = `🔗 **Link Original:** <${targetUrl}>`;
+        const captionText = `🔗 <${targetUrl}>`;
 
         // Gunakan channel.send karena message asli sudah dihapus
         const loadingMsg = await message.channel.send({ content: '⏳ Sedang memproses media...' });
