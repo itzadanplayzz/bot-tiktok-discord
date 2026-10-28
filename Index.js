@@ -261,7 +261,7 @@ client.on('interactionCreate', async (interaction) => {
     const { commandName } = interaction;
     const targetUrl = interaction.options.getString('link');
     // PERBAIKAN SINTAKS BACKTICK DI SINI
-    const captionText = `🔗 **Link Original:** <${targetUrl}>`;
+    const captionText = ` <${targetUrl}>`;
 
     if (!targetUrl.includes('tiktok.com')) {
         return interaction.reply({ content: '❌ Harap masukkan URL link TikTok yang valid!', flags: MessageFlags.Ephemeral });
