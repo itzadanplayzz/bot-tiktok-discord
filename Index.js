@@ -212,7 +212,7 @@ client.on('messageCreate', async (message) => {
         if (result.success) {
             if (!result.isVideo) {
                 if (result.urls.length === 1) {
-                    await loadingMsg.edit({ content: '⏳ Mendeteksi 1 foto. Sedang menyatukan foto & musik menjadi video...' });
+                    await loadingMsg.edit({ content: '⏳menyatukan foto & musik' });
                     
                     try {
                         const renderData = await renderSingleTikTokSlide(result.urls[0], result.audioUrl, message.id);
